@@ -2,6 +2,8 @@ import gradio as gr
 from dashscope import MultiModalConversation
 import dashscope
 import re
+import os
+import time
 
 
 def extract_document_info(image):
@@ -12,7 +14,7 @@ def extract_document_info(image):
             "content": [
                 {"image": image},
                 {
-                    "text": "请你提取文档中的如下信息：1. Bio 2. Abstract 3. 主讲人 4. 主办方 5. 会议时间（YYYY-MM-DD HH:MM，24小时制） 6. 会议地点"
+                    "text": "请你提取文档中的如下信息：1. Title 2. Bio 3. Abstract 4. location 5. date 6. authors\n时间的格式为2006-01-02T15:04:05+08:00，北京时间\n结果每一行为单独的一个属性，以冒号开头，中间不得换行，以下是一个例子：\nTitle: Example Title\nBio: Example Bio\nAbstract: Example Abstract\nlocation: Example location\ndate: Example date\nauthors: Example author1, Example author2, Example author3\n"
                 },
             ],
         }
@@ -25,61 +27,70 @@ def extract_document_info(image):
         result = response.get("output", {})["choices"][0]["message"]["content"][0][
             "text"
         ]
-        yield process_result(result)
-    return process_result(result)
+        yield None, process_result(result)
+    yield render_hugo_template(result), process_result(result)
 
+
+
+def render_hugo_template(text):
+    info_dict = {}
+
+    for line in text.split("\n"):
+        line = line.strip()
+        if line:
+            if ":" in line:
+                key, value = line.split(":", 1)
+                key = key.strip()
+                value = value.strip()
+                info_dict[key] = value
+    with open("hugo_template.md", "r", encoding="utf-8") as file:
+        template = file.read()
+    for key, value in info_dict.items():
+        template = template.replace("{{" + key.lower() + "}}", value)
+    try:
+        os.makedirs("output", exist_ok=True)
+    except Exception as e:
+        print(e)
+    filename = f"output/{time.strftime('%Y-%m-%d-%H-%M-%S',time.localtime(time.time()))}.md"
+    with open(filename, "w", encoding="utf-8") as file:
+        file.write(template)
+    return filename
 
 
 def process_result(text):
     info_dict = {}
 
-    # 提取Bio信息
-    bio_match = re.search(r"Bio:([^\n]*)", text, re.DOTALL)
-    info_dict["Bio"] = bio_match.group(1).strip() if bio_match else None
+    for line in text.split("\n"):
+        line = line.strip()
+        if line:
+            if ":" in line:
+                key, value = line.split(":", 1)
+                key = key.strip()
+                value = value.strip()
+                info_dict[key] = value
 
-    # 提取Abstract信息
-    abstract_match = re.search(r"Abstract:([^\n]*)", text, re.DOTALL)
-    info_dict["Abstract"] = abstract_match.group(1).strip() if abstract_match else None
-
-    # 提取主讲人信息
-    speaker_match = re.search(r"主讲人:([^\n]*)", text, re.DOTALL)
-    info_dict["主讲人"] = speaker_match.group(1).strip() if speaker_match else None
-
-    # 提取主办方信息
-    organizer_match = re.search(r"主办方:([^\n]*)", text, re.DOTALL)
-    info_dict["主办方"] = organizer_match.group(1).strip() if organizer_match else None
-
-    # 提取会议时间信息
-    time_match = re.search(r"会议时间:([^\n]*)", text, re.DOTALL)
-    info_dict["会议时间"] = time_match.group(1).strip() if time_match else None
-
-    # 提取会议地点信息
-    location_match = re.search(r"会议地点:([^\n]*)", text, re.DOTALL)
-    info_dict["会议地点"] = location_match.group(1).strip() if location_match else None
-
-    markdown_text = ""
+    markdown_text = "## 提取信息预览\n"
     for key, value in info_dict.items():
-        if value is not None:
-            markdown_text += f"### {key}\n{value}\n"
-        else:
-            markdown_text += f"### {key}\n等待中……\n"
+        if len(value) > 30:
+            value = value[:15] + "..." + value[-15:]
+        markdown_text += f"### {key}\n{value}\n"
     return markdown_text
-
 
 
 def gradio_interface():
     """Create a Gradio interface for the document extraction tool."""
     inputs = gr.Image(type="filepath", label="上传文档图片")
-    outputs = gr.Markdown(label="提取的信息")
+    outputs = [gr.File(label="下载Hugo页面"), gr.Markdown(label="提取的信息")]
 
     interface = gr.Interface(
         fn=extract_document_info,
         inputs=inputs,
         outputs=outputs,
         title="文档结构化信息提取工具",
-        description="上传文档图片，提取以下信息：1. Bio 2. Abstract 3. 主讲人 4. 主办方 5. 会议时间（YYYY-MM-DD HH:MM，24小时制） 6. 会议地点",
+        description="上传文档图片，提取信息，自动生成hugo页面",
     )
     interface.launch()
+
 
 if __name__ == "__main__":
     with open("API_KEY.txt", "r") as file:
