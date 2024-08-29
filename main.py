@@ -1,33 +1,48 @@
 import gradio as gr
-from dashscope import MultiModalConversation
-import dashscope
-import re
+import openai
 import os
 import time
 from PIL import Image
+import paddleocr
+import json
+
+
+ocr = paddleocr.PaddleOCR(lang="ch")
 
 
 def extract_document_info(image):
     """Extract structured information from the document image."""
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {"image": preprocess_image(image)},
-                {
-                    "text": "请你提取文档中的如下信息：1. Title 2. Bio 3. Abstract 4. Location 5. Date 6. Authors(报告人)\n时间的格式为2006-01-02T15:04:05+08:00，北京时间\n结果每一行为单独的一个属性，以冒号开头，中间不得换行，以下是一个例子：\nTitle: Example Title\nBio: Example Bio\nAbstract: Example Abstract\nlocation: Example location\ndate: Example date\nauthors: Example author1, Example author2, Example author3\n"
-                },
-            ],
-        }
-    ]
-    responses = MultiModalConversation.call(
-        model="qwen-vl-max-0201", messages=messages, stream=True
+    prompt = (
+        "请你提取文档中的如下信息：1. Title 2. Bio 3. Abstract 4. Location 5. Date 6. Authors(报告人，可能只有一个)\n"
+        "时间的格式为2006-01-02T15:04:05+08:00，北京时间\n"
+        "结果每一行为单独的一个属性，以英文冒号开头，中间不得换行\n"
+        "你应该修复一些可能存在的格式错误，如在英文中使用中文标点等\n"
+        "报告的地点可以给出中文，大概率是北京市区内的地点\n"
+        "以下是一个例子：\n"
+        "Title: Example Title\n"
+        "Bio: Example Bio\n"
+        "Abstract: Example Abstract\n"
+        "Location: Example location\n"
+        "Date: Example date\n"
+        "Authors: Example author1, Example author2, Example author3\n"
+        "下面是文档的OCR结果，请你根据结果提取内容：\n"
+        f"{ocr_image(preprocess_image(image))}\n"
+    )
+    responses = openai.chat.completions.create(
+        model="deepseek-chat",
+        messages=[
+            {
+                "role": "system",
+                "content": "你是一个负责从OCR结果中提取关键信息的AI助手，你除了用户要求的格式内容外，不会输出任何多余语句",
+            },
+            {"role": "user", "content": prompt},
+        ],
+        stream=True,
+        temperature=0,
     )
     result = ""
     for response in responses:
-        result = response.get("output", {})["choices"][0]["message"]["content"][0][
-            "text"
-        ]
+        result += response.choices[0].delta.content
         yield None, process_result(result)
     yield render_hugo_template(result), process_result(result)
 
@@ -43,14 +58,29 @@ def preprocess_image(image_path):
     new_width = new_width // 28 * 28
     new_height = new_height // 28 * 28
     img = img.resize((new_width, new_height), Image.Resampling.BICUBIC)
-    
+
     output_folder = "output"
     os.makedirs(output_folder, exist_ok=True)
-    output_path = os.path.join(output_folder, f"{time.strftime('%Y-%m-%d-%H-%M-%S', time.localtime(time.time()))}.png")
+    output_path = os.path.join(
+        output_folder,
+        f"{time.strftime('%Y-%m-%d-%H-%M-%S', time.localtime(time.time()))}.png",
+    )
     img.save(output_path)
-    
+
     return output_path
 
+
+def ocr_image(image_path):
+    result = ocr.ocr(image_path)
+    json_result = []
+    for line in result[0]:
+        json_result.append(
+            {
+                "text": line[1],
+                "bbox": [line[0][0], line[0][2]],
+            }
+        )
+    return json.dumps(json_result, ensure_ascii=False)
 
 
 def render_hugo_template(text):
@@ -91,8 +121,6 @@ def process_result(text):
 
     markdown_text = "## 提取信息预览\n"
     for key, value in info_dict.items():
-        if len(value) > 30:
-            value = value[:15] + "..." + value[-15:]
         markdown_text += f"### {key}\n{value}\n"
     return markdown_text
 
@@ -114,5 +142,6 @@ def gradio_interface():
 
 if __name__ == "__main__":
     with open("API_KEY.txt", "r") as file:
-        dashscope.api_key = file.read().strip()
+        openai.api_key = file.read().strip()
+    openai.base_url = "https://api.deepseek.com"
     gradio_interface()
