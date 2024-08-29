@@ -15,8 +15,9 @@
 ## 技术栈 🛠️
 
 - **Gradio**：用于构建用户界面，支持图片上传和结果展示。
-- **Dashscope**：用于多模态对话，提取文档信息。
+- **Deepseek**：用于提取文档信息。
 - **Hugo**：静态站点生成器，用于生成页面模板。
+- **PaddleOCR**：用于OCR（光学字符识别），从图片中提取文本信息。
 
 ## 安装与使用 🚀
 
@@ -28,7 +29,7 @@ pip install -r requirements.txt
 
 ### 配置API密钥
 
-将您的Dashscope API密钥保存到`API_KEY.txt`文件中。该API由阿里云提供，请[在这里](https://bailian.console.aliyun.com)查看更多信息。
+将您的Deepseek API密钥保存到`API_KEY.txt`文件中。该API由Deepseek提供，请[在这里](https://platform.deepseek.com/)查看更多信息。
 
 ### 运行应用
 
